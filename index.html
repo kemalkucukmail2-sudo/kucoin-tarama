@@ -1,238 +1,165 @@
+
 <!DOCTYPE html>
 <html lang="tr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>KuCoin 1 Saatlik AL-SAT Tarayıcı</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>KuCoin 1 Saatlik AL-SAT</title>
 <style>
 *{box-sizing:border-box}
 body{margin:0;background:#10151f;color:#edf2f7;font-family:Arial,sans-serif}
-main{max-width:1000px;margin:auto;padding:16px}
-h1{font-size:23px;margin:8px 0}
-p{color:#aab6c8;font-size:14px;line-height:1.5}
-button{width:100%;padding:14px;background:#18b981;color:#07140f;
-border:0;border-radius:9px;font-weight:bold;font-size:16px;margin:12px 0}
-button:disabled{opacity:.5}
-#status{padding:12px;background:#1b2534;border-radius:8px;font-size:14px;line-height:1.6}
-.stats{display:flex;gap:8px;margin:12px 0}
-.stat{flex:1;background:#1b2534;padding:12px;border-radius:8px;text-align:center}
+main{max-width:900px;margin:auto;padding:16px}
+h2{font-size:22px}
+p{color:#aab6c8;line-height:1.5;font-size:14px}
+button{width:100%;padding:15px;background:#18b981;border:0;border-radius:9px;font-weight:bold;font-size:16px}
+#status,.stat{background:#1b2534;padding:12px;border-radius:8px;margin:12px 0;overflow-wrap:anywhere}
+.stats{display:flex;gap:8px}
+.stat{flex:1;text-align:center;font-size:13px}
 .stat strong{display:block;font-size:22px;margin-top:6px}
-.tablewrap{overflow-x:auto;margin-top:12px}
 table{width:100%;border-collapse:collapse;background:#1b2534;font-size:13px}
-th,td{padding:12px 9px;border-bottom:1px solid #303a4a;text-align:left;white-space:nowrap}
-th{color:#aab6c8}
+th,td{padding:11px 7px;border-bottom:1px solid #303a4a;text-align:left}
 .buy{color:#35e0a0;font-weight:bold}
 .sell{color:#ff8585;font-weight:bold}
-.empty{padding:20px;text-align:center;color:#aab6c8}
-small{color:#8998ad}
+.tablewrap{overflow-x:auto}
 </style>
 </head>
 <body>
 <main>
-  <h1>KuCoin 1 Saatlik AL-SAT</h1>
-  <p>Aktif KuCoin USDT Spot paritelerini tarar. Kaldıraç kullanmaz.
-  Sinyaller son kapanmış 1 saatlik mum üzerinden hesaplanır.</p>
-
-  <button id="scan">TARAMAYI BAŞLAT</button>
-  <div id="status">Başlamak için düğmeye bas.</div>
-
-  <div class="stats">
-    <div class="stat">Taranan<strong id="scanned">0</strong></div>
-    <div class="stat">AL<strong id="buys">0</strong></div>
-    <div class="stat">SAT<strong id="sells">0</strong></div>
-  </div>
-
-  <div class="tablewrap">
-    <table>
-      <thead><tr><th>Parite</th><th>Sinyal</th><th>Fiyat</th><th>RSI</th></tr></thead>
-      <tbody id="results"><tr><td colspan="4" class="empty">Henüz tarama yapılmadı.</td></tr></tbody>
-    </table>
-  </div>
-  <p><small>Bilgi amaçlıdır; sinyal kâr garantisi değildir. API erişimi veya hız sınırı nedeniyle bazı pariteler taranamayabilir.</small></p>
+<h2>KuCoin 1 Saatlik AL-SAT</h2>
+<p>USDT Spot pariteleri taranır. Sinyaller kapanmış mumlara göre hesaplanır. Kâr garantisi yoktur.</p>
+<button id="scan">TARAMAYI BAŞLAT</button>
+<div id="status">Tarama başlatılmadı.</div>
+<div class="stats">
+<div class="stat">Taranan<strong id="scanned">0</strong></div>
+<div class="stat">AL<strong id="buys">0</strong></div>
+<div class="stat">SAT<strong id="sells">0</strong></div>
+</div>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Parite</th><th>Sinyal</th><th>Fiyat</th><th>RSI</th></tr></thead>
+<tbody id="results"><tr><td colspan="4">Henüz tarama yapılmadı.</td></tr></tbody>
+</table>
+</div>
 </main>
-
 <script>
-const API = "https://api.kucoin.com";
-const $ = id => document.getElementById(id);
-let busy = false;
+const API="https://api.kucoin.com";
+const PROXY="https://api.allorigins.win/raw?url=";
+const $=id=>document.getElementById(id);
+let busy=false;
 
-async function getJSON(url, attempts=3) {
-  let lastError;
-  for (let i=0; i<attempts; i++) {
-    try {
-      const r = await fetch(url);
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      const j = await r.json();
-      if (j.code !== "200000") throw new Error(j.msg || "KuCoin API hatası");
-      return j.data;
-    } catch(e) {
-      lastError = e;
-      await new Promise(resolve => setTimeout(resolve, 500 * (i+1)));
-    }
-  }
-  throw lastError;
+async function getJSON(url){
+  const r=await fetch(PROXY+encodeURIComponent(url));
+  if(!r.ok) throw Error("Ara servis HTTP "+r.status);
+  const j=await r.json();
+  if(j.code!=="200000") throw Error(j.msg||"KuCoin API hatası");
+  return j.data;
 }
-
-function candlesToBars(raw, intervalSeconds) {
-  const currentStart = Math.floor(Date.now()/1000/intervalSeconds)*intervalSeconds;
-  return raw
-    .map(c => ({t:+c[0], open:+c[1], close:+c[2], high:+c[3],
-                low:+c[4], volume:+c[5]}))
-    .filter(c => c.t < currentStart)
-    .sort((a,b) => a.t-b.t);
-}
-
-function ema(values, period) {
-  if (values.length < period) return [];
-  const out = [];
-  const k = 2/(period+1);
-  let prev = values[0];
-  for (let i=0; i<values.length; i++) {
-    prev = i===0 ? values[i] : values[i]*k + prev*(1-k);
-    out.push(prev);
+function ema(a,p){
+  if(a.length<p)return [];
+  const k=2/(p+1),out=[];
+  let v=a[0];
+  for(let i=0;i<a.length;i++){
+    v=i===0?a[i]:a[i]*k+v*(1-k);
+    out.push(v);
   }
   return out;
 }
-
-function rsi(values, period=14) {
-  if (values.length <= period) return NaN;
-  let gain=0, loss=0;
-  for (let i=1; i<=period; i++) {
-    const d=values[i]-values[i-1];
-    if (d>0) gain+=d; else loss-=d;
+function rsi(a,p=14){
+  if(a.length<=p)return NaN;
+  let g=0,l=0;
+  for(let i=1;i<=p;i++){
+    let d=a[i]-a[i-1];
+    if(d>0)g+=d;else l-=d;
   }
-  let avgGain=gain/period, avgLoss=loss/period;
-  for (let i=period+1; i<values.length; i++) {
-    const d=values[i]-values[i-1];
-    avgGain=(avgGain*(period-1)+Math.max(d,0))/period;
-    avgLoss=(avgLoss*(period-1)+Math.max(-d,0))/period;
+  g/=p;l/=p;
+  for(let i=p+1;i<a.length;i++){
+    let d=a[i]-a[i-1];
+    g=(g*(p-1)+Math.max(d,0))/p;
+    l=(l*(p-1)+Math.max(-d,0))/p;
   }
-  if (avgLoss===0) return 100;
-  return 100-(100/(1+avgGain/avgLoss));
+  return l===0?100:100-100/(1+g/l);
 }
-
-async function scanPair(symbol, price) {
-  const raw1h = await getJSON(
-    API + "/api/v1/market/candles?symbol=" +
-    encodeURIComponent(symbol) + "&type=1hour"
-  );
-  const bars = candlesToBars(raw1h, 3600);
-  if (bars.length < 60) return null;
-
-  const closes = bars.map(b=>b.close);
-  const e20=ema(closes,20), e50=ema(closes,50);
-  const macdFast=ema(closes,12), macdSlow=ema(closes,26);
-  if (!e20.length || !e50.length) return null;
-
-  const macdLine=closes.map((_,i)=>macdFast[i]-macdSlow[i]);
-  const macdSignal=ema(macdLine,9);
-  const n=closes.length-1;
-  const r=rsi(closes,14);
-
-  const crossUp=e20[n]>e50[n] && e20[n-1]<=e50[n-1];
-  const crossDown=e20[n]<e50[n] && e20[n-1]>=e50[n-1];
-  const macdUp=macdLine[n]>macdSignal[n];
-  const macdDown=macdLine[n]<macdSignal[n];
-
-  if (crossUp && macdUp && r>=40) {
-    const raw4h = await getJSON(
-      API + "/api/v1/market/candles?symbol=" +
-      encodeURIComponent(symbol) + "&type=4hour"
-    );
-    const bars4h=candlesToBars(raw4h,14400);
-    if (bars4h.length < 200) return null;
-    const c4=bars4h.map(b=>b.close);
+function bars(raw,seconds){
+  const now=Math.floor(Date.now()/1000/seconds)*seconds;
+  return raw.map(c=>({t:+c[0],close:+c[2]}))
+    .filter(c=>c.t<now).sort((a,b)=>a.t-b.t);
+}
+async function candles(symbol,type,seconds){
+  const raw=await getJSON(API+"/api/v1/market/candles?symbol="+
+    encodeURIComponent(symbol)+"&type="+type);
+  return bars(raw,seconds).map(c=>c.close);
+}
+async function scanPair(symbol,price){
+  const c=await candles(symbol,"1hour",3600);
+  if(c.length<60)return null;
+  const e20=ema(c,20),e50=ema(c,50);
+  const fast=ema(c,12),slow=ema(c,26);
+  const ml=c.map((v,i)=>fast[i]-slow[i]);
+  const ms=ema(ml,9),n=c.length-1;
+  const r=rsi(c);
+  const up=e20[n]>e50[n]&&e20[n-1]<=e50[n-1];
+  const down=e20[n]<e50[n]&&e20[n-1]>=e50[n-1];
+  if(up&&ml[n]>ms[n]&&r>=40){
+    const c4=await candles(symbol,"4hour",14400);
+    if(c4.length<200)return null;
     const e200=ema(c4,200);
-    if (e200.length && c4[c4.length-1]>e200[e200.length-1]) {
-      return {symbol, signal:r>=50?"GÜÇLÜ AL":"AL", price, rsi:r, side:"buy"};
-    }
+    if(c4[c4.length-1]>e200[e200.length-1])
+      return {symbol,price,r,side:"buy",signal:r>=50?"GÜÇLÜ AL":"AL"};
   }
-
-  if (crossDown && macdDown && r<=60) {
-    return {symbol, signal:r<=50?"GÜÇLÜ SAT":"SAT", price, rsi:r, side:"sell"};
-  }
+  if(down&&ml[n]<ms[n]&&r<=60)
+    return {symbol,price,r,side:"sell",signal:r<=50?"GÜÇLÜ SAT":"SAT"};
   return null;
 }
-
-function fmtPrice(n) {
-  if (!Number.isFinite(n)) return "-";
-  return n.toLocaleString("tr-TR",{maximumFractionDigits:8});
-}
-
-function showResults(rows) {
-  rows.sort((a,b)=>a.side===b.side ? a.symbol.localeCompare(b.symbol) :
-    (a.side==="buy" ? -1 : 1));
+function render(rows){
+  rows.sort((a,b)=>a.side===b.side?
+    a.symbol.localeCompare(b.symbol):(a.side==="buy"?-1:1));
   $("buys").textContent=rows.filter(x=>x.side==="buy").length;
   $("sells").textContent=rows.filter(x=>x.side==="sell").length;
-  if (!rows.length) {
-    $("results").innerHTML='<tr><td colspan="4" class="empty">Son kapanmış mumda uygun sinyal bulunamadı.</td></tr>';
-    return;
-  }
-  $("results").innerHTML=rows.map(x=>`
-    <tr>
-      <td>${x.symbol}</td>
-      <td class="${x.side}">${x.signal}</td>
-      <td>${fmtPrice(x.price)}</td>
-      <td>${x.rsi.toFixed(1)}</td>
-    </tr>`).join("");
+  $("results").innerHTML=rows.length?rows.map(x=>
+    `<tr><td>${x.symbol}</td><td class="${x.side}">${x.signal}</td><td>${Number(x.price).toLocaleString("tr-TR",{maximumFractionDigits:8})}</td><td>${x.r.toFixed(1)}</td></tr>`
+  ).join(""):'<tr><td colspan="4">Son kapanmış mumda sinyal bulunamadı.</td></tr>';
 }
-
-async function runScan() {
-  if (busy) return;
-  busy=true;
-  $("scan").disabled=true;
+async function runScan(){
+  if(busy)return;
+  busy=true;$("scan").disabled=true;
   $("scan").textContent="TARANIYOR...";
-  $("scanned").textContent="0";
-  $("buys").textContent="0";
-  $("sells").textContent="0";
-  $("results").innerHTML='<tr><td colspan="4" class="empty">Pariteler taranıyor...</td></tr>';
-
-  let done=0, failed=0, signals=[];
-  try {
-    $("status").textContent="KuCoin pariteleri alınıyor...";
-    const [symbols,tickers] = await Promise.all([
+  $("status").textContent="KuCoin verileri alınıyor...";
+  $("results").innerHTML="";
+  $("scanned").textContent="0";$("buys").textContent="0";$("sells").textContent="0";
+  try{
+    const [symbols,tickerData]=await Promise.all([
       getJSON(API+"/api/v2/symbols"),
       getJSON(API+"/api/v1/market/allTickers")
     ]);
-
-    const tickerMap=new Map(tickers.ticker.map(t=>[t.symbol,t]));
-    const pairs=symbols.filter(s =>
-      s.enableTrading && s.quoteCurrency==="USDT" &&
-      tickerMap.has(s.symbol) &&
-      Number(tickerMap.get(s.symbol).last)>0
-    ).map(s=>({
-      symbol:s.symbol,
-      price:Number(tickerMap.get(s.symbol).last)
-    }));
-
-    $("status").textContent=`${pairs.length} aktif USDT Spot paritesi bulundu. Tarama başladı...`;
-    let next=0;
-    const workers=Array.from({length:5},async()=>{
-      while (next<pairs.length) {
+    const prices=new Map(tickerData.ticker.map(t=>[t.symbol,Number(t.last)]));
+    const pairs=symbols.filter(s=>s.enableTrading&&s.quoteCurrency==="USDT"&&prices.has(s.symbol));
+    const rows=[];let next=0,done=0,failed=0;
+    $("status").textContent=pairs.length+" parite bulundu. Tarama başladı.";
+    async function worker(){
+      while(next<pairs.length){
         const p=pairs[next++];
-        try {
-          const result=await scanPair(p.symbol,p.price);
-          if (result) {
-            signals.push(result);
-            showResults(signals);
-          }
-        } catch(e) { failed++; }
+        try{
+          const signal=await scanPair(p.symbol,prices.get(p.symbol));
+          if(signal)rows.push(signal);
+        }catch(e){failed++;}
         done++;
-        $("scanned").textContent=done;
-        $("status").textContent=`Taranıyor: ${done}/${pairs.length} · Sinyal: ${signals.length} · Atlanan/hata: ${failed}`;
+        $("scanned").textContent=done+" / "+pairs.length;
+        if(done%10===0||done===pairs.length){
+          render(rows);
+          $("status").textContent="Taranıyor "+done+"/"+pairs.length+
+            " | Hata/atlanma: "+failed;
+        }
       }
-    });
-    await Promise.all(workers);
-    showResults(signals);
-    $("status").textContent=`Tarama tamamlandı. ${done} parite kontrol edildi; ${signals.length} sinyal bulundu. Hata/atlanma: ${failed}.`;
-  } catch(e) {
+    }
+    await Promise.all(Array.from({length:3},()=>worker()));
+    render(rows);
+    $("status").textContent="Tamamlandı: "+done+" parite | "+rows.length+
+      " sinyal | Hata/atlanma: "+failed;
+  }catch(e){
     $("status").textContent="Bağlantı hatası: "+e.message+
-      ". İnternet bağlantısını kontrol edip tekrar dene.";
-    $("results").innerHTML='<tr><td colspan="4" class="empty">Tarama tamamlanamadı.</td></tr>';
-  } finally {
-    busy=false;
-    $("scan").disabled=false;
-    $("scan").textContent="TEKRAR TARA";
+      ". Ara servis erişilemiyor veya sınırlandırılmış olabilir.";
+  }finally{
+    busy=false;$("scan").disabled=false;$("scan").textContent="TEKRAR TARA";
   }
 }
 $("scan").addEventListener("click",runScan);
