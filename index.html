@@ -165,4 +165,77 @@ function showResults(rows) {
   $("buys").textContent=rows.filter(x=>x.side==="buy").length;
   $("sells").textContent=rows.filter(x=>x.side==="sell").length;
   if (!rows.length) {
-    $("results").innerHTML='<tr><td colspan="4" class="empty">Son kapanmış mumda uygun sinyal bulunamad
+    $("results").innerHTML='<tr><td colspan="4" class="empty">Son kapanmış mumda uygun sinyal bulunamadı.</td></tr>';
+    return;
+  }
+  $("results").innerHTML=rows.map(x=>`
+    <tr>
+      <td>${x.symbol}</td>
+      <td class="${x.side}">${x.signal}</td>
+      <td>${fmtPrice(x.price)}</td>
+      <td>${x.rsi.toFixed(1)}</td>
+    </tr>`).join("");
+}
+
+async function runScan() {
+  if (busy) return;
+  busy=true;
+  $("scan").disabled=true;
+  $("scan").textContent="TARANIYOR...";
+  $("scanned").textContent="0";
+  $("buys").textContent="0";
+  $("sells").textContent="0";
+  $("results").innerHTML='<tr><td colspan="4" class="empty">Pariteler taranıyor...</td></tr>';
+
+  let done=0, failed=0, signals=[];
+  try {
+    $("status").textContent="KuCoin pariteleri alınıyor...";
+    const [symbols,tickers] = await Promise.all([
+      getJSON(API+"/api/v2/symbols"),
+      getJSON(API+"/api/v1/market/allTickers")
+    ]);
+
+    const tickerMap=new Map(tickers.ticker.map(t=>[t.symbol,t]));
+    const pairs=symbols.filter(s =>
+      s.enableTrading && s.quoteCurrency==="USDT" &&
+      tickerMap.has(s.symbol) &&
+      Number(tickerMap.get(s.symbol).last)>0
+    ).map(s=>({
+      symbol:s.symbol,
+      price:Number(tickerMap.get(s.symbol).last)
+    }));
+
+    $("status").textContent=`${pairs.length} aktif USDT Spot paritesi bulundu. Tarama başladı...`;
+    let next=0;
+    const workers=Array.from({length:5},async()=>{
+      while (next<pairs.length) {
+        const p=pairs[next++];
+        try {
+          const result=await scanPair(p.symbol,p.price);
+          if (result) {
+            signals.push(result);
+            showResults(signals);
+          }
+        } catch(e) { failed++; }
+        done++;
+        $("scanned").textContent=done;
+        $("status").textContent=`Taranıyor: ${done}/${pairs.length} · Sinyal: ${signals.length} · Atlanan/hata: ${failed}`;
+      }
+    });
+    await Promise.all(workers);
+    showResults(signals);
+    $("status").textContent=`Tarama tamamlandı. ${done} parite kontrol edildi; ${signals.length} sinyal bulundu. Hata/atlanma: ${failed}.`;
+  } catch(e) {
+    $("status").textContent="Bağlantı hatası: "+e.message+
+      ". İnternet bağlantısını kontrol edip tekrar dene.";
+    $("results").innerHTML='<tr><td colspan="4" class="empty">Tarama tamamlanamadı.</td></tr>';
+  } finally {
+    busy=false;
+    $("scan").disabled=false;
+    $("scan").textContent="TEKRAR TARA";
+  }
+}
+$("scan").addEventListener("click",runScan);
+</script>
+</body>
+</html>
