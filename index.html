@@ -3,310 +3,369 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kripto 1H AL-SAT Tarayıcı</title>
+<title>Kripto Al-Sat Tarayıcı</title>
 <style>
 *{box-sizing:border-box}
-body{margin:0;background:#10151f;color:#edf2f7;font-family:Arial,sans-serif}
-main{max-width:1000px;margin:auto;padding:16px}
-h2{font-size:22px}
-p{color:#aab6c8;font-size:14px;line-height:1.5}
-button{width:100%;padding:15px;background:#18b981;border:0;border-radius:9px;font-size:16px;font-weight:bold}
-button:disabled{opacity:.6}
-#status,.stat{background:#1b2534;padding:12px;border-radius:8px;margin:12px 0;overflow-wrap:anywhere}
-.stats{display:flex;gap:8px}
-.stat{flex:1;text-align:center;font-size:13px}
-.stat strong{display:block;font-size:21px;margin-top:6px}
-.tablewrap{overflow-x:auto}
-table{width:100%;border-collapse:collapse;background:#1b2534;font-size:13px}
-th,td{padding:11px 7px;border-bottom:1px solid #303a4a;text-align:left;white-space:nowrap}
-.buy{color:#35e0a0;font-weight:bold}
-.sell{color:#ff8585;font-weight:bold}
-.note{font-size:12px;color:#aab6c8}
+body{margin:0;padding:16px;background:#10151d;color:#e8edf5;font-family:Arial,sans-serif}
+h2{margin:4px 0 8px}
+p{color:#aab6c7;font-size:14px;line-height:1.5}
+button{background:#16a085;color:white;border:0;border-radius:8px;padding:13px 18px;font-size:16px;font-weight:bold;cursor:pointer}
+button:disabled{opacity:.5}
+#status{margin:14px 0;padding:12px;background:#1b2532;border-radius:8px;font-size:14px}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+.filters button{font-size:13px;padding:9px 12px;background:#283444}
+.filters button.active{background:#16a085}
+.summary{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+.pill{background:#1b2532;padding:10px;border-radius:8px;font-size:13px}
+.tablewrap{overflow-x:auto;background:#171f2b;border-radius:8px}
+table{border-collapse:collapse;width:100%;min-width:680px;font-size:13px}
+th,td{padding:11px 9px;border-bottom:1px solid #2b3544;text-align:left;white-space:nowrap}
+th{background:#202b3a;color:#b9c8da;position:sticky;top:0}
+.buy{color:#36d399;font-weight:bold}
+.sell{color:#ff7474;font-weight:bold}
+.watchup{color:#ffd166;font-weight:bold}
+.watchdown{color:#ff9f7a;font-weight:bold}
+.neutral{color:#aab6c7}
+.small{font-size:12px;color:#9cabbf}
+a{color:#6cb6ff}
 </style>
 </head>
 <body>
-<main>
-<h2>Kripto 1H AL-SAT Tarayıcı</h2>
-<p>Binance Spot · USDT pariteleri · 1 saatlik sinyal · 4 saatlik EMA200 filtresi</p>
-<button id="scan">TARAMAYI BAŞLAT</button>
-<div id="status">Tarama başlatılmadı.</div>
+<h2>Kripto Al-Sat Tarayıcı</h2>
+<p>Binance Spot USDT pariteleri · 1 saatlik sinyal · 4 saatlik EMA200 filtresi</p>
 
-<div class="stats">
-  <div class="stat">Taranan<strong id="scanned">0</strong></div>
-  <div class="stat">AL<strong id="buys">0</strong></div>
-  <div class="stat">SAT<strong id="sells">0</strong></div>
+<button id="scanBtn" onclick="startScan()">TEKRAR TARA</button>
+
+<div id="status">Tarama başlatılmaya hazır. Tarama yalnızca düğmeye bastığında çalışır.</div>
+
+<div class="summary">
+  <div class="pill">Taranan: <b id="scanned">0</b></div>
+  <div class="pill">Yükseliş takibi: <b id="upCount">0</b></div>
+  <div class="pill">Düşüş takibi: <b id="downCount">0</b></div>
+  <div class="pill">AL/SAT: <b id="signalCount">0</b></div>
 </div>
 
-<p class="note">
-Güncel fiyat, tarama anındaki Binance fiyatıdır.
-Sinyal kapanışı, son kapanmış 1 saatlik mumun fiyatıdır.
-Otomatik tarama kapalıdır.
-</p>
+<div class="filters">
+  <button class="active" onclick="setFilter('ALL',this)">TÜM UYARILAR</button>
+  <button onclick="setFilter('UP',this)">YÜKSELİŞ TAKİBİ</button>
+  <button onclick="setFilter('DOWN',this)">DÜŞÜŞ TAKİBİ</button>
+  <button onclick="setFilter('TRADE',this)">AL / SAT</button>
+</div>
 
 <div class="tablewrap">
 <table>
 <thead>
 <tr>
 <th>Parite</th>
-<th>Sinyal</th>
+<th>Uyarı / Sinyal</th>
 <th>Güncel fiyat</th>
-<th>Sinyal kapanışı</th>
+<th>Son 1s kapanışı</th>
 <th>RSI</th>
+<th>4s EMA200</th>
 </tr>
 </thead>
 <tbody id="results">
-<tr><td colspan="5">Henüz tarama yapılmadı.</td></tr>
+<tr><td colspan="6">Henüz tarama yapılmadı.</td></tr>
 </tbody>
 </table>
 </div>
-</main>
+
+<p class="small">
+Not: Erken takip uyarıları alım veya satım emri değildir. İşlem garantisi vermez.
+Fiyatlar ve göstergeler değişebilir. Bu sayfa gerçek işlem yapmaz.
+</p>
 
 <script>
-const API="https://data-api.binance.vision";
-const $=id=>document.getElementById(id);
-let busy=false;
+const API = "https://data-api.binance.vision";
+let allResults = [];
+let activeFilter = "ALL";
+let isScanning = false;
 
-async function getJSON(url){
-  const r=await fetch(url,{cache:"no-store"});
-  if(!r.ok)throw Error("HTTP "+r.status);
-  return await r.json();
+function setFilter(filter, button) {
+  activeFilter = filter;
+  document.querySelectorAll(".filters button").forEach(b => b.classList.remove("active"));
+  button.classList.add("active");
+  renderResults();
 }
 
-function ema(a,p){
-  if(a.length<p)return [];
-  const k=2/(p+1),out=[];
-  let v=a.slice(0,p).reduce((s,x)=>s+x,0)/p;
-
-  for(let i=0;i<a.length;i++){
-    if(i<p-1){
-      out.push(NaN);
-      continue;
-    }
-    if(i===p-1){
-      v=a.slice(0,p).reduce((s,x)=>s+x,0)/p;
-    }else{
-      v=a[i]*k+v*(1-k);
-    }
-    out.push(v);
+function ema(values, period) {
+  if (!values.length) return [];
+  const k = 2 / (period + 1);
+  const out = [values[0]];
+  for (let i = 1; i < values.length; i++) {
+    out.push(values[i] * k + out[i - 1] * (1 - k));
   }
   return out;
 }
 
-function calcRSI(a,p=14){
-  if(a.length<=p)return NaN;
-  let gain=0,loss=0;
+function rsiSeries(closes, period = 14) {
+  const out = Array(closes.length).fill(null);
+  if (closes.length <= period) return out;
 
-  for(let i=1;i<=p;i++){
-    const d=a[i]-a[i-1];
-    gain+=Math.max(d,0);
-    loss+=Math.max(-d,0);
+  let gains = 0, losses = 0;
+  for (let i = 1; i <= period; i++) {
+    const change = closes[i] - closes[i - 1];
+    if (change > 0) gains += change;
+    else losses -= change;
   }
 
-  gain/=p;
-  loss/=p;
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
 
-  for(let i=p+1;i<a.length;i++){
-    const d=a[i]-a[i-1];
-    gain=(gain*(p-1)+Math.max(d,0))/p;
-    loss=(loss*(p-1)+Math.max(-d,0))/p;
+  function calc(g, l) {
+    if (l === 0) return g === 0 ? 50 : 100;
+    return 100 - 100 / (1 + g / l);
   }
 
-  if(loss===0)return gain===0?50:100;
-  return 100-100/(1+gain/loss);
+  out[period] = calc(avgGain, avgLoss);
+
+  for (let i = period + 1; i < closes.length; i++) {
+    const change = closes[i] - closes[i - 1];
+    avgGain = (avgGain * (period - 1) + Math.max(change, 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + Math.max(-change, 0)) / period;
+    out[i] = calc(avgGain, avgLoss);
+  }
+  return out;
 }
 
-function closedCloses(raw,seconds){
-  const boundary=Math.floor(Date.now()/1000/seconds)*seconds*1000;
-  return raw.filter(k=>Number(k[0])<boundary).map(k=>Number(k[4]));
+async function getJSON(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("API yanıtı: " + response.status);
+  return response.json();
 }
 
-async function getCloses(symbol,interval,seconds,limit){
-  const url=API+"/api/v3/klines?symbol="+
-    encodeURIComponent(symbol)+"&interval="+interval+"&limit="+limit;
-  return closedCloses(await getJSON(url),seconds);
-}
+function analyzePair(symbol, candles1h, candles4h, currentPrice) {
+  // Son satır halen açık olabilecek mumu dışarıda bırak.
+  const c1 = candles1h.slice(0, -1);
+  const c4 = candles4h.slice(0, -1);
 
-async function scanPair(symbol){
-  const c=await getCloses(symbol,"1h",3600,100);
-  if(c.length<55)return null;
+  if (c1.length < 60 || c4.length < 200) return null;
 
-  const e20=ema(c,20);
-  const e50=ema(c,50);
-  const fast=ema(c,12);
-  const slow=ema(c,26);
-  const macd=c.map((_,i)=>fast[i]-slow[i]);
-  const validMacd=macd.filter(Number.isFinite);
-  const signal=ema(validMacd,9);
+  const close = c1.map(x => Number(x[4]));
+  const volume = c1.map(x => Number(x[5]));
+  const e20 = ema(close, 20);
+  const e50 = ema(close, 50);
 
-  const n=c.length-1;
-  const m=validMacd.length-1;
-  const sig=signal.length-1;
-  const r=calcRSI(c);
+  const macdLine = close.map((_, i) => {
+    return ema(close.slice(0, i + 1), 12).at(-1) -
+           ema(close.slice(0, i + 1), 26).at(-1);
+  });
+  const macdSignal = ema(macdLine, 9);
+  const rsi = rsiSeries(close, 14);
 
-  if(!Number.isFinite(r)||
-     !Number.isFinite(e20[n])||
-     !Number.isFinite(e50[n])||
-     m<1||sig<1)return null;
+  const i = close.length - 1;
+  const p = i - 1;
+  if (p < 30 || rsi[i] == null || rsi[p] == null) return null;
 
-  const crossUp=e20[n]>e50[n]&&e20[n-1]<=e50[n-1];
-  const crossDown=e20[n]<e50[n]&&e20[n-1]>=e50[n-1];
-  const macdUp=validMacd[m]>signal[sig];
-  const macdDown=validMacd[m]<signal[sig];
+  const lastClose = close[i];
+  const currentRSI = rsi[i];
+  const previousRSI = rsi[p];
+  const crossUp = e20[p] <= e50[p] && e20[i] > e50[i];
+  const crossDown = e20[p] >= e50[p] && e20[i] < e50[i];
 
-  if(crossUp&&macdUp&&r>=40){
-    const c4=await getCloses(symbol,"4h",14400,220);
-    if(c4.length<200)return null;
+  const macdUp = macdLine[i] > macdSignal[i];
+  const macdDown = macdLine[i] < macdSignal[i];
+  const macdImproving = macdLine[i] > macdLine[p];
+  const macdWeakening = macdLine[i] < macdLine[p];
 
-    const e200=ema(c4,200);
-    const last=c4.length-1;
+  const gapNow = Math.abs(e20[i] - e50[i]) / lastClose;
+  const gapBefore = Math.abs(e20[p] - e50[p]) / close[p];
+  const gapNarrowing = gapNow < gapBefore;
 
-    if(c4[last]>e200[last]){
-      return {
-        symbol,
-        signalPrice:c[n],
-        currentPrice:null,
-        r,
-        side:"buy",
-        signal:r>=50?"GÜÇLÜ AL":"AL"
-      };
+  const avgVol = volume.slice(-21, -1).reduce((a,b) => a+b, 0) / 20;
+  const volumeOK = avgVol > 0 && volume[i] >= avgVol;
+
+  const close4h = c4.map(x => Number(x[4]));
+  const ema200_4h = ema(close4h, 200).at(-1);
+  const price4h = close4h.at(-1);
+  const trendOK = price4h > ema200_4h;
+
+  let signal = "";
+  let type = "";
+  let cls = "";
+
+  // Önce gerçek kesişim sinyallerini değerlendir.
+  if (crossUp && macdUp && currentRSI >= 40 && trendOK) {
+    signal = currentRSI >= 50 ? "GÜÇLÜ AL" : "AL";
+    type = "TRADE";
+    cls = "buy";
+  } else if (crossDown && macdDown && currentRSI <= 60) {
+    signal = currentRSI <= 50 ? "GÜÇLÜ SAT" : "SAT";
+    type = "TRADE";
+    cls = "sell";
+  } else {
+    // Erken yükseliş takibi: henüz AL kesişimi oluşmamış olmalı.
+    const earlyUp =
+      !crossUp &&
+      trendOK &&
+      e20[i] <= e50[i] &&
+      gapNarrowing &&
+      gapNow <= 0.008 &&
+      macdImproving &&
+      currentRSI > previousRSI &&
+      currentRSI >= 40 &&
+      currentRSI <= 60 &&
+      volumeOK;
+
+    // Erken düşüş takibi: henüz SAT kesişimi oluşmamış olmalı.
+    const earlyDown =
+      !crossDown &&
+      e20[i] >= e50[i] &&
+      gapNarrowing &&
+      gapNow <= 0.008 &&
+      macdWeakening &&
+      currentRSI < previousRSI &&
+      currentRSI >= 40 &&
+      currentRSI <= 60 &&
+      volumeOK;
+
+    if (earlyUp) {
+      signal = "YÜKSELİŞ ÖNCESİ TAKİP";
+      type = "UP";
+      cls = "watchup";
+    } else if (earlyDown) {
+      signal = "DÜŞÜŞ ÖNCESİ TAKİP";
+      type = "DOWN";
+      cls = "watchdown";
     }
   }
 
-  if(crossDown&&macdDown&&r<=60){
-    return {
-      symbol,
-      signalPrice:c[n],
-      currentPrice:null,
-      r,
-      side:"sell",
-      signal:r<=50?"GÜÇLÜ SAT":"SAT"
-    };
+  if (!signal) return null;
+
+  return {
+    symbol,
+    signal,
+    type,
+    cls,
+    currentPrice: Number(currentPrice || lastClose),
+    lastClose,
+    rsi: currentRSI,
+    trendOK
+  };
+}
+
+function renderResults() {
+  let rows = allResults.filter(r => {
+    if (activeFilter === "ALL") return true;
+    if (activeFilter === "UP") return r.type === "UP";
+    if (activeFilter === "DOWN") return r.type === "DOWN";
+    if (activeFilter === "TRADE") return r.type === "TRADE";
+    return true;
+  });
+
+  rows.sort((a,b) => {
+    const order = {TRADE:0, UP:1, DOWN:2};
+    return order[a.type] - order[b.type] ||
+      a.symbol.localeCompare(b.symbol);
+  });
+
+  const tbody = document.getElementById("results");
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="6">Bu filtrede uyarı bulunamadı.</td></tr>';
+    return;
   }
 
-  return null;
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td><b>${r.symbol}</b></td>
+      <td class="${r.cls}">${r.signal}</td>
+      <td>${formatPrice(r.currentPrice)}</td>
+      <td>${formatPrice(r.lastClose)}</td>
+      <td>${r.rsi.toFixed(1)}</td>
+      <td class="${r.trendOK ? 'buy' : 'sell'}">${r.trendOK ? 'ÜZERİNDE' : 'ALTINDA'}</td>
+    </tr>
+  `).join("");
 }
 
-function fmtPrice(value){
-  if(!Number.isFinite(value))return "—";
-  return value.toLocaleString("en-US",{maximumFractionDigits:8});
+function formatPrice(n) {
+  if (!Number.isFinite(n)) return "-";
+  return n < 1 ? n.toFixed(8).replace(/0+$/,"").replace(/\.$/,"") : n.toFixed(4);
 }
 
-function showResults(rows){
-  rows.sort((a,b)=>
-    a.side===b.side
-      ?a.symbol.localeCompare(b.symbol)
-      :(a.side==="buy"?-1:1)
-  );
+async function startScan() {
+  if (isScanning) return;
+  isScanning = true;
+  allResults = [];
 
-  $("buys").textContent=rows.filter(x=>x.side==="buy").length;
-  $("sells").textContent=rows.filter(x=>x.side==="sell").length;
+  const button = document.getElementById("scanBtn");
+  const status = document.getElementById("status");
+  button.disabled = true;
+  button.textContent = "TARANIYOR...";
+  document.getElementById("results").innerHTML =
+    '<tr><td colspan="6">Pariteler taranıyor, lütfen bekle...</td></tr>';
 
-  $("results").innerHTML=rows.length?rows.map(x=>
-    `<tr>
-      <td>${x.symbol}</td>
-      <td class="${x.side}">${x.signal}</td>
-      <td>${fmtPrice(x.currentPrice)}</td>
-      <td>${fmtPrice(x.signalPrice)}</td>
-      <td>${x.r.toFixed(1)}</td>
-    </tr>`
-  ).join(""):'<tr><td colspan="5">Kapanmış mumlarda uygun sinyal bulunamadı.</td></tr>';
-}
+  try {
+    status.textContent = "Binance Spot pariteleri alınıyor...";
+    const exchange = await getJSON(API + "/api/v3/exchangeInfo");
+    const symbols = exchange.symbols
+      .filter(s => s.status === "TRADING" &&
+                   s.quoteAsset === "USDT" &&
+                   s.isSpotTradingAllowed)
+      .map(s => s.symbol);
 
-async function refreshCurrentPrices(rows){
-  if(!rows.length)return;
+    status.textContent = symbols.length + " parite bulundu. Tarama başladı...";
+    document.getElementById("scanned").textContent = "0";
 
-  const tickers=await getJSON(API+"/api/v3/ticker/price");
-  const prices=new Map(tickers.map(t=>[t.symbol,Number(t.price)]));
+    let prices = {};
+    try {
+      const tickerData = await getJSON(API + "/api/v3/ticker/price");
+      tickerData.forEach(t => prices[t.symbol] = Number(t.price));
+    } catch (e) {
+      status.textContent = "Güncel fiyatlar alınamadı; kapanış fiyatları kullanılabilir.";
+    }
 
-  for(const row of rows){
-    row.currentPrice=prices.get(row.symbol)??null;
-  }
-}
+    let completed = 0;
+    let cursor = 0;
+    const workerCount = 3;
 
-async function runScan(){
-  if(busy)return;
+    async function worker() {
+      while (cursor < symbols.length) {
+        const symbol = symbols[cursor++];
+        try {
+          const [k1, k4] = await Promise.all([
+            getJSON(API + "/api/v3/klines?symbol=" + symbol + "&interval=1h&limit=100"),
+            getJSON(API + "/api/v3/klines?symbol=" + symbol + "&interval=4h&limit=220")
+          ]);
 
-  busy=true;
-  $("scan").disabled=true;
-  $("scan").textContent="TARANIYOR...";
-  $("status").textContent="Binance pariteleri alınıyor...";
-  $("results").innerHTML='<tr><td colspan="5">Tarama sürüyor...</td></tr>';
-  $("scanned").textContent="0";
-  $("buys").textContent="0";
-  $("sells").textContent="0";
-
-  try{
-    const info=await getJSON(API+"/api/v3/exchangeInfo");
-    const pairs=info.symbols.filter(s=>
-      s.status==="TRADING"&&
-      s.quoteAsset==="USDT"&&
-      s.isSpotTradingAllowed!==false
-    ).map(s=>s.symbol);
-
-    let next=0,done=0,failed=0;
-    const rows=[];
-
-    $("status").textContent=pairs.length+" USDT Spot paritesi bulundu.";
-
-    async function worker(){
-      while(next<pairs.length){
-        const symbol=pairs[next++];
-
-        try{
-          const result=await scanPair(symbol);
-          if(result)rows.push(result);
-        }catch(e){
-          failed++;
+          const result = analyzePair(symbol, k1, k4, prices[symbol]);
+          if (result) allResults.push(result);
+        } catch (e) {
+          // Bir paritedeki hata tüm taramayı durdurmasın.
         }
 
-        done++;
-        $("scanned").textContent=done+" / "+pairs.length;
-
-        if(done%10===0||done===pairs.length){
-          showResults(rows);
-          $("status").textContent=
-            "Taranıyor: "+done+"/"+pairs.length+
-            " | Hata: "+failed+
-            " | Sinyal: "+rows.length;
+        completed++;
+        if (completed % 10 === 0 || completed === symbols.length) {
+          document.getElementById("scanned").textContent =
+            completed + " / " + symbols.length;
+          status.textContent = "Tarama sürüyor: " + completed +
+            " / " + symbols.length + " parite";
         }
       }
     }
 
-    await Promise.all(Array.from({length:3},()=>worker()));
+    await Promise.all(Array.from({length: workerCount}, () => worker()));
 
-    $("status").textContent="Sinyaller tamamlandı. Güncel fiyatlar alınıyor...";
+    document.getElementById("upCount").textContent =
+      allResults.filter(r => r.type === "UP").length;
+    document.getElementById("downCount").textContent =
+      allResults.filter(r => r.type === "DOWN").length;
+    document.getElementById("signalCount").textContent =
+      allResults.filter(r => r.type === "TRADE").length;
 
-    let priceError=false;
-    try{
-      await refreshCurrentPrices(rows);
-    }catch(e){
-      priceError=true;
-    }
-
-    showResults(rows);
-
-    const time=new Date().toLocaleString("tr-TR",{
-      dateStyle:"short",timeStyle:"medium"
-    });
-
-    $("status").textContent=
-      "Son tarama: "+time+
-      " | "+done+" parite"+
-      " | "+rows.length+" sinyal"+
-      " | Hata: "+failed+
-      (priceError?" | Güncel fiyat alınamadı.":" | Fiyatlar güncellendi.");
-
-  }catch(e){
-    $("status").textContent="Bağlantı hatası: "+e.message;
-    $("results").innerHTML='<tr><td colspan="5">Tarama başlatılamadı.</td></tr>';
-  }finally{
-    busy=false;
-    $("scan").disabled=false;
-    $("scan").textContent="TEKRAR TARA";
+    renderResults();
+    status.textContent = "Tarama tamamlandı: " +
+      symbols.length + " parite kontrol edildi. Son tarama: " +
+      new Date().toLocaleString("tr-TR");
+  } catch (e) {
+    status.textContent = "Tarama başarısız: Binance verilerine erişilemedi. Biraz sonra tekrar dene.";
+    document.getElementById("results").innerHTML =
+      '<tr><td colspan="6">Veri alınamadı. İnternet bağlantısını kontrol edip tekrar tara.</td></tr>';
+  } finally {
+    isScanning = false;
+    button.disabled = false;
+    button.textContent = "TEKRAR TARA";
   }
 }
-
-$("scan").addEventListener("click",runScan);
 </script>
 </body>
 </html>
