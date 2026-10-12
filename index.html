@@ -1,371 +1,127 @@
-<!DOCTYPE html>
-<html lang="tr">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kripto Al-Sat Tarayıcı</title>
-<style>
-*{box-sizing:border-box}
-body{margin:0;padding:16px;background:#10151d;color:#e8edf5;font-family:Arial,sans-serif}
-h2{margin:4px 0 8px}
-p{color:#aab6c7;font-size:14px;line-height:1.5}
-button{background:#16a085;color:white;border:0;border-radius:8px;padding:13px 18px;font-size:16px;font-weight:bold;cursor:pointer}
-button:disabled{opacity:.5}
-#status{margin:14px 0;padding:12px;background:#1b2532;border-radius:8px;font-size:14px}
-.filters{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
-.filters button{font-size:13px;padding:9px 12px;background:#283444}
-.filters button.active{background:#16a085}
-.summary{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
-.pill{background:#1b2532;padding:10px;border-radius:8px;font-size:13px}
-.tablewrap{overflow-x:auto;background:#171f2b;border-radius:8px}
-table{border-collapse:collapse;width:100%;min-width:680px;font-size:13px}
-th,td{padding:11px 9px;border-bottom:1px solid #2b3544;text-align:left;white-space:nowrap}
-th{background:#202b3a;color:#b9c8da;position:sticky;top:0}
-.buy{color:#36d399;font-weight:bold}
-.sell{color:#ff7474;font-weight:bold}
-.watchup{color:#ffd166;font-weight:bold}
-.watchdown{color:#ff9f7a;font-weight:bold}
-.neutral{color:#aab6c7}
-.small{font-size:12px;color:#9cabbf}
-a{color:#6cb6ff}
-</style>
-</head>
-<body>
-<h2>Kripto Al-Sat Tarayıcı</h2>
-<p>Binance Spot USDT pariteleri · 1 saatlik sinyal · 4 saatlik EMA200 filtresi</p>
+#!/usr/bin/env python3
+# scanner.py
+# Binance Spot USDT - 1 saatlik kırılım ve geri test tarayıcısı
 
-<button id="scanBtn" onclick="startScan()">TEKRAR TARA</button>
+from __future__ import annotations
 
-<div id="status">Tarama başlatılmaya hazır. Tarama yalnızca düğmeye bastığında çalışır.</div>
+import concurrent.futures
+import csv
+import os
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
-<div class="summary">
-  <div class="pill">Taranan: <b id="scanned">0</b></div>
-  <div class="pill">Yükseliş takibi: <b id="upCount">0</b></div>
-  <div class="pill">Düşüş takibi: <b id="downCount">0</b></div>
-  <div class="pill">AL/SAT: <b id="signalCount">0</b></div>
-</div>
+import pandas as pd
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
-<div class="filters">
-  <button class="active" onclick="setFilter('ALL',this)">TÜM UYARILAR</button>
-  <button onclick="setFilter('UP',this)">YÜKSELİŞ TAKİBİ</button>
-  <button onclick="setFilter('DOWN',this)">DÜŞÜŞ TAKİBİ</button>
-  <button onclick="setFilter('TRADE',this)">AL / SAT</button>
-</div>
 
-<div class="tablewrap">
-<table>
-<thead>
-<tr>
-<th>Parite</th>
-<th>Uyarı / Sinyal</th>
-<th>Güncel fiyat</th>
-<th>Son 1s kapanışı</th>
-<th>RSI</th>
-<th>4s EMA200</th>
-</tr>
-</thead>
-<tbody id="results">
-<tr><td colspan="6">Henüz tarama yapılmadı.</td></tr>
-</tbody>
-</table>
-</div>
+BASE_URL = os.getenv("BINANCE_BASE_URL", "https://api.binance.com")
+QUOTE_ASSET = os.getenv("QUOTE_ASSET", "USDT").upper()
+MIN_QUOTE_VOLUME = float(os.getenv("MIN_QUOTE_VOLUME_USDT", "500000"))
+VOLUME_MULTIPLIER = float(os.getenv("VOLUME_MULTIPLIER", "1.5"))
+BREAKOUT_LOOKBACK = int(os.getenv("BREAKOUT_LOOKBACK", "20"))
+VOLUME_LOOKBACK = int(os.getenv("VOLUME_LOOKBACK", "20"))
+RETEST_MAX_BARS = int(os.getenv("RETEST_MAX_BARS", "5"))
+STOP_ATR_MULTIPLIER = float(os.getenv("STOP_ATR_MULTIPLIER", "1.5"))
+TARGET_ATR_MULTIPLIER = float(os.getenv("TARGET_ATR_MULTIPLIER", "3.0"))
+MAX_WORKERS = int(os.getenv("MAX_WORKERS", "8"))
+REQUEST_TIMEOUT = 20
 
-<p class="small">
-Not: Erken takip uyarıları alım veya satım emri değildir. İşlem garantisi vermez.
-Fiyatlar ve göstergeler değişebilir. Bu sayfa gerçek işlem yapmaz.
-</p>
+REPORT_DIR = Path("reports")
+REPORT_DIR.mkdir(exist_ok=True)
 
-<script>
-const API = "https://data-api.binance.vision";
-let allResults = [];
-let activeFilter = "ALL";
-let isScanning = false;
 
-function setFilter(filter, button) {
-  activeFilter = filter;
-  document.querySelectorAll(".filters button").forEach(b => b.classList.remove("active"));
-  button.classList.add("active");
-  renderResults();
-}
+def make_session() -> requests.Session:
+    session = requests.Session()
+    retry = Retry(
+        total=4,
+        backoff_factor=0.7,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=("GET",),
+    )
+    adapter = HTTPAdapter(
+        max_retries=retry,
+        pool_connections=MAX_WORKERS,
+        pool_maxsize=MAX_WORKERS,
+    )
+    session.mount("https://", adapter)
+    session.headers.update({"User-Agent": "BinanceSpotScanner/1.0"})
+    return session
 
-function ema(values, period) {
-  if (!values.length) return [];
-  const k = 2 / (period + 1);
-  const out = [values[0]];
-  for (let i = 1; i < values.length; i++) {
-    out.push(values[i] * k + out[i - 1] * (1 - k));
-  }
-  return out;
-}
 
-function rsiSeries(closes, period = 14) {
-  const out = Array(closes.length).fill(null);
-  if (closes.length <= period) return out;
+SESSION = make_session()
 
-  let gains = 0, losses = 0;
-  for (let i = 1; i <= period; i++) {
-    const change = closes[i] - closes[i - 1];
-    if (change > 0) gains += change;
-    else losses -= change;
-  }
 
-  let avgGain = gains / period;
-  let avgLoss = losses / period;
+def api_get(path: str, params: dict[str, Any] | None = None) -> Any:
+    response = SESSION.get(
+        f"{BASE_URL}{path}",
+        params=params,
+        timeout=REQUEST_TIMEOUT,
+    )
+    response.raise_for_status()
+    return response.json()
 
-  function calc(g, l) {
-    if (l === 0) return g === 0 ? 50 : 100;
-    return 100 - 100 / (1 + g / l);
-  }
 
-  out[period] = calc(avgGain, avgLoss);
+def klines_to_df(rows: list[list[Any]]) -> pd.DataFrame:
+    columns = [
+        "open_time", "open", "high", "low", "close", "volume",
+        "close_time", "quote_volume", "trades",
+        "taker_buy_base", "taker_buy_quote", "ignore",
+    ]
 
-  for (let i = period + 1; i < closes.length; i++) {
-    const change = closes[i] - closes[i - 1];
-    avgGain = (avgGain * (period - 1) + Math.max(change, 0)) / period;
-    avgLoss = (avgLoss * (period - 1) + Math.max(-change, 0)) / period;
-    out[i] = calc(avgGain, avgLoss);
-  }
-  return out;
-}
+    df = pd.DataFrame(rows, columns=columns)
 
-async function getJSON(url) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error("API yanıtı: " + response.status);
-  return response.json();
-}
+    for col in (
+        "open", "high", "low", "close", "volume", "quote_volume"
+    ):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
-function analyzePair(symbol, candles1h, candles4h, currentPrice) {
-  // Son satır halen açık olabilecek mumu dışarıda bırak.
-  const c1 = candles1h.slice(0, -1);
-  const c4 = candles4h.slice(0, -1);
+    df["open_time"] = pd.to_datetime(
+        df["open_time"], unit="ms", utc=True
+    )
+    df["close_time"] = pd.to_datetime(
+        df["close_time"], unit="ms", utc=True
+    )
 
-  if (c1.length < 60 || c4.length < 200) return null;
+    return (
+        df.dropna(subset=["open", "high", "low", "close", "volume"])
+        .reset_index(drop=True)
+    )
 
-  const close = c1.map(x => Number(x[4]));
-  const volume = c1.map(x => Number(x[5]));
-  const e20 = ema(close, 20);
-  const e50 = ema(close, 50);
 
-  const macdLine = close.map((_, i) => {
-    return ema(close.slice(0, i + 1), 12).at(-1) -
-           ema(close.slice(0, i + 1), 26).at(-1);
-  });
-  const macdSignal = ema(macdLine, 9);
-  const rsi = rsiSeries(close, 14);
+def get_btc_filter() -> tuple[bool, float, float]:
+    """Yalnızca kapanmış 4 saatlik BTC mumlarını kullanır."""
+    rows = api_get(
+        "/api/v3/klines",
+        {"symbol": "BTCUSDT", "interval": "4h", "limit": 230},
+    )
 
-  const i = close.length - 1;
-  const p = i - 1;
-  if (p < 30 || rsi[i] == null || rsi[p] == null) return null;
+    df = klines_to_df(rows)
 
-  const lastClose = close[i];
-  const currentRSI = rsi[i];
-  const previousRSI = rsi[p];
-  const crossUp = e20[p] <= e50[p] && e20[i] > e50[i];
-  const crossDown = e20[p] >= e50[p] && e20[i] < e50[i];
+    # Son mum henüz kapanmamış olabilir; kullanma.
+    closed = df.iloc[:-1].copy()
 
-  const macdUp = macdLine[i] > macdSignal[i];
-  const macdDown = macdLine[i] < macdSignal[i];
-  const macdImproving = macdLine[i] > macdLine[p];
-  const macdWeakening = macdLine[i] < macdLine[p];
+    if len(closed) < 200:
+        raise RuntimeError("BTC EMA200 için yeterli 4 saatlik veri yok.")
 
-  const gapNow = Math.abs(e20[i] - e50[i]) / lastClose;
-  const gapBefore = Math.abs(e20[p] - e50[p]) / close[p];
-  const gapNarrowing = gapNow < gapBefore;
+    ema200 = closed["close"].ewm(
+        span=200, adjust=False
+    ).mean().iloc[-1]
 
-  const avgVol = volume.slice(-21, -1).reduce((a,b) => a+b, 0) / 20;
-  const volumeOK = avgVol > 0 && volume[i] >= avgVol;
+    close = float(closed["close"].iloc[-1])
 
-  const close4h = c4.map(x => Number(x[4]));
-  const ema200_4h = ema(close4h, 200).at(-1);
-  const price4h = close4h.at(-1);
-  const trendOK = price4h > ema200_4h;
+    return close > float(ema200), close, float(ema200)
 
-  let signal = "";
-  let type = "";
-  let cls = "";
 
-  // Önce gerçek kesişim sinyallerini değerlendir.
-  if (crossUp && macdUp && currentRSI >= 40 && trendOK) {
-    signal = currentRSI >= 50 ? "GÜÇLÜ AL" : "AL";
-    type = "TRADE";
-    cls = "buy";
-  } else if (crossDown && macdDown && currentRSI <= 60) {
-    signal = currentRSI <= 50 ? "GÜÇLÜ SAT" : "SAT";
-    type = "TRADE";
-    cls = "sell";
-  } else {
-    // Erken yükseliş takibi: henüz AL kesişimi oluşmamış olmalı.
-    const earlyUp =
-      !crossUp &&
-      trendOK &&
-      e20[i] <= e50[i] &&
-      gapNarrowing &&
-      gapNow <= 0.008 &&
-      macdImproving &&
-      currentRSI > previousRSI &&
-      currentRSI >= 40 &&
-      currentRSI <= 60 &&
-      volumeOK;
+def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
 
-    // Erken düşüş takibi: henüz SAT kesişimi oluşmamış olmalı.
-    const earlyDown =
-      !crossDown &&
-      e20[i] >= e50[i] &&
-      gapNarrowing &&
-      gapNow <= 0.008 &&
-      macdWeakening &&
-      currentRSI < previousRSI &&
-      currentRSI >= 40 &&
-      currentRSI <= 60 &&
-      volumeOK;
+    df["ema20"] = df["close"].ewm(
+        span=20, adjust=False
+    ).mean()
 
-    if (earlyUp) {
-      signal = "YÜKSELİŞ ÖNCESİ TAKİP";
-      type = "UP";
-      cls = "watchup";
-    } else if (earlyDown) {
-      signal = "DÜŞÜŞ ÖNCESİ TAKİP";
-      type = "DOWN";
-      cls = "watchdown";
-    }
-  }
-
-  if (!signal) return null;
-
-  return {
-    symbol,
-    signal,
-    type,
-    cls,
-    currentPrice: Number(currentPrice || lastClose),
-    lastClose,
-    rsi: currentRSI,
-    trendOK
-  };
-}
-
-function renderResults() {
-  let rows = allResults.filter(r => {
-    if (activeFilter === "ALL") return true;
-    if (activeFilter === "UP") return r.type === "UP";
-    if (activeFilter === "DOWN") return r.type === "DOWN";
-    if (activeFilter === "TRADE") return r.type === "TRADE";
-    return true;
-  });
-
-  rows.sort((a,b) => {
-    const order = {TRADE:0, UP:1, DOWN:2};
-    return order[a.type] - order[b.type] ||
-      a.symbol.localeCompare(b.symbol);
-  });
-
-  const tbody = document.getElementById("results");
-  if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="6">Bu filtrede uyarı bulunamadı.</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = rows.map(r => `
-    <tr>
-      <td><b>${r.symbol}</b></td>
-      <td class="${r.cls}">${r.signal}</td>
-      <td>${formatPrice(r.currentPrice)}</td>
-      <td>${formatPrice(r.lastClose)}</td>
-      <td>${r.rsi.toFixed(1)}</td>
-      <td class="${r.trendOK ? 'buy' : 'sell'}">${r.trendOK ? 'ÜZERİNDE' : 'ALTINDA'}</td>
-    </tr>
-  `).join("");
-}
-
-function formatPrice(n) {
-  if (!Number.isFinite(n)) return "-";
-  return n < 1 ? n.toFixed(8).replace(/0+$/,"").replace(/\.$/,"") : n.toFixed(4);
-}
-
-async function startScan() {
-  if (isScanning) return;
-  isScanning = true;
-  allResults = [];
-
-  const button = document.getElementById("scanBtn");
-  const status = document.getElementById("status");
-  button.disabled = true;
-  button.textContent = "TARANIYOR...";
-  document.getElementById("results").innerHTML =
-    '<tr><td colspan="6">Pariteler taranıyor, lütfen bekle...</td></tr>';
-
-  try {
-    status.textContent = "Binance Spot pariteleri alınıyor...";
-    const exchange = await getJSON(API + "/api/v3/exchangeInfo");
-    const symbols = exchange.symbols
-      .filter(s => s.status === "TRADING" &&
-                   s.quoteAsset === "USDT" &&
-                   s.isSpotTradingAllowed)
-      .map(s => s.symbol);
-
-    status.textContent = symbols.length + " parite bulundu. Tarama başladı...";
-    document.getElementById("scanned").textContent = "0";
-
-    let prices = {};
-    try {
-      const tickerData = await getJSON(API + "/api/v3/ticker/price");
-      tickerData.forEach(t => prices[t.symbol] = Number(t.price));
-    } catch (e) {
-      status.textContent = "Güncel fiyatlar alınamadı; kapanış fiyatları kullanılabilir.";
-    }
-
-    let completed = 0;
-    let cursor = 0;
-    const workerCount = 3;
-
-    async function worker() {
-      while (cursor < symbols.length) {
-        const symbol = symbols[cursor++];
-        try {
-          const [k1, k4] = await Promise.all([
-            getJSON(API + "/api/v3/klines?symbol=" + symbol + "&interval=1h&limit=100"),
-            getJSON(API + "/api/v3/klines?symbol=" + symbol + "&interval=4h&limit=220")
-          ]);
-
-          const result = analyzePair(symbol, k1, k4, prices[symbol]);
-          if (result) allResults.push(result);
-        } catch (e) {
-          // Bir paritedeki hata tüm taramayı durdurmasın.
-        }
-
-        completed++;
-        if (completed % 10 === 0 || completed === symbols.length) {
-          document.getElementById("scanned").textContent =
-            completed + " / " + symbols.length;
-          status.textContent = "Tarama sürüyor: " + completed +
-            " / " + symbols.length + " parite";
-        }
-      }
-    }
-
-    await Promise.all(Array.from({length: workerCount}, () => worker()));
-
-    document.getElementById("upCount").textContent =
-      allResults.filter(r => r.type === "UP").length;
-    document.getElementById("downCount").textContent =
-      allResults.filter(r => r.type === "DOWN").length;
-    document.getElementById("signalCount").textContent =
-      allResults.filter(r => r.type === "TRADE").length;
-
-    renderResults();
-    status.textContent = "Tarama tamamlandı: " +
-      symbols.length + " parite kontrol edildi. Son tarama: " +
-      new Date().toLocaleString("tr-TR");
-  } catch (e) {
-    status.textContent = "Tarama başarısız: Binance verilerine erişilemedi. Biraz sonra tekrar dene.";
-    document.getElementById("results").innerHTML =
-      '<tr><td colspan="6">Veri alınamadı. İnternet bağlantısını kontrol edip tekrar tara.</td></tr>';
-  } finally {
-    isScanning = false;
-    button.disabled = false;
-    button.textContent = "TEKRAR TARA";
-  }
-}
-</script>
-</body>
-</html>
+    df
