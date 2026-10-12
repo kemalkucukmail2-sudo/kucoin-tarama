@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # scanner.py
 # Binance Spot USDT - 1 saatlik kırılım ve geri test tarayıcısı
 
